@@ -300,25 +300,6 @@ python face-mosaic-yolov8.py "rtsp://camera/stream" \
     --fps 30
 ```
 
-## 📊 パフォーマンス
-
-### ベンチマーク結果例
-
-**テスト環境:** Intel Core i7, 16GB RAM, NVIDIA RTX 3060
-
-| 設定          | CPU FPS | GPU FPS | 高速化 |
-| ------------- | ------- | ------- | ------ |
-| yolov8n 720p  | 12 fps  | 58 fps  | 4.8x   |
-| yolov8s 720p  | 8 fps   | 45 fps  | 5.6x   |
-| yolov8s 1080p | 5 fps   | 32 fps  | 6.4x   |
-| yolov8m 1080p | 3 fps   | 25 fps  | 8.3x   |
-
-**推奨事項:**
-
-- リアルタイム配信: 25fps 以上を維持
-- GPU 使用時は中〜大サイズモデルでも快適に動作
-- CPU 使用時は yolov8n + 720p が推奨
-
 ## 🔍 トラブルシューティング
 
 ### FFmpeg が見つからない
