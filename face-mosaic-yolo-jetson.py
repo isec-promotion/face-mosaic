@@ -152,6 +152,9 @@ def parse_arguments():
     parser.add_argument('--no-preview',
                        action='store_true',
                        help='プレビューウィンドウを表示しない')
+    parser.add_argument('--no-tensorrt',
+                       action='store_true',
+                       help='TensorRT変換をスキップしてPyTorchモデルを使用')
     
     return parser.parse_args()
 
@@ -197,24 +200,31 @@ def main():
             model = YOLO(args.model)
             print("PyTorchモデルの読み込みが完了しました")
             
-            # TensorRTへの変換を試みる
-            print("\nTensorRTエンジンへの変換を試みています...")
-            print("（初回のみ時間がかかります。数分お待ちください）")
-            try:
-                # TensorRTへエクスポート
-                # half=True でFP16精度（Jetsonで高速）
-                model.export(format='engine', half=True, device=0)
-                
-                # 変換されたエンジンファイルを再読み込み
-                print(f"\n変換が完了しました。TensorRTエンジン（{engine_file}）を読み込んでいます...")
-                model = YOLO(engine_file, task='detect')
-                model_type = 'TensorRT'
-                print("TensorRTエンジンでの実行準備が完了しました")
-                
-            except Exception as e:
-                print(f"\n警告: TensorRTへの変換に失敗しました: {e}")
+            # --no-tensorrtフラグがある場合はTensorRT変換をスキップ
+            if args.no_tensorrt:
+                print("\n--no-tensorrtフラグが指定されたため、TensorRT変換をスキップします")
                 print("PyTorchモデルをそのまま使用します")
                 model_type = 'PyTorch'
+            else:
+                # TensorRTへの変換を試みる
+                print("\nTensorRTエンジンへの変換を試みています...")
+                print("（初回のみ時間がかかります。数分お待ちください）")
+                print("※すぐに開始したい場合は Ctrl+C で中断し、--no-tensorrt オプションを使用してください")
+                try:
+                    # TensorRTへエクスポート
+                    # half=True でFP16精度（Jetsonで高速）
+                    model.export(format='engine', half=True, device=0)
+                    
+                    # 変換されたエンジンファイルを再読み込み
+                    print(f"\n変換が完了しました。TensorRTエンジン（{engine_file}）を読み込んでいます...")
+                    model = YOLO(engine_file, task='detect')
+                    model_type = 'TensorRT'
+                    print("TensorRTエンジンでの実行準備が完了しました")
+                    
+                except Exception as e:
+                    print(f"\n警告: TensorRTへの変換に失敗しました: {e}")
+                    print("PyTorchモデルをそのまま使用します")
+                    model_type = 'PyTorch'
                 
         except Exception as e:
             print(f"エラー: モデルの読み込みに失敗しました: {e}")
