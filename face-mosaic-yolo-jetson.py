@@ -174,9 +174,13 @@ def main():
     
     # YOLOv8モデルの読み込み（TensorRT最適化対応）
     import os
+    import torch
     
-    # TensorRTエンジンファイル名を生成
-    engine_file = args.model.replace('.pt', '.engine')
+    # TensorRTエンジンファイル名を生成（環境依存）
+    # 異なるGPU/TensorRTバージョン間では互換性がないため、デバイス名を含める
+    device_name = torch.cuda.get_device_name(0).replace(' ', '_') if torch.cuda.is_available() else 'cpu'
+    base_name = args.model.replace('.pt', '')
+    engine_file = f"{base_name}_{device_name}.engine"
     
     model = None
     model_type = None
@@ -248,27 +252,57 @@ def main():
     
     print("接続成功（ハードウェアデコード使用）")
     
-    # FFmpegプロセスの設定（NVENCハードウェアアクセラレーション対応）
-    ffmpeg_cmd = [
-        'ffmpeg',
-        '-y',
-        '-f', 'rawvideo',
-        '-vcodec', 'rawvideo',
-        '-pix_fmt', 'bgr24',
-        '-s', f'{args.width}x{args.height}',
-        '-r', str(args.fps),
-        '-i', '-',
-        '-f', 'mpegts',
-        '-codec:v', 'h264_nvenc',  # NVENCハードウェアエンコーダを使用
-        '-preset', 'p4',  # プリセット: p1(fastest)～p7(slowest), p4=medium
-        '-tune', 'll',  # 低遅延チューニング
-        '-b:v', '2000k',  # ビットレート
-        '-maxrate', '2500k',  # 最大ビットレート
-        '-bufsize', '4000k',  # バッファサイズ
-        '-g', str(args.fps * 2),  # GOPサイズ（2秒）
-        '-bf', '0',  # Bフレーム無効（低遅延）
-        args.output,
-    ]
+    # 環境に応じたFFmpegエンコーダーの選択
+    import platform
+    is_jetson = os.path.exists('/etc/nv_tegra_release') or 'tegra' in platform.platform().lower()
+    
+    if is_jetson:
+        # Jetson環境: libx264（ソフトウェアエンコード）を使用
+        # Jetsonのハードウェアエンコーダー（omx/nvv4l2）はGStreamerで使用
+        print("Jetson環境を検出しました。libx264エンコーダーを使用します")
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-pix_fmt', 'bgr24',
+            '-s', f'{args.width}x{args.height}',
+            '-r', str(args.fps),
+            '-i', '-',
+            '-f', 'mpegts',
+            '-codec:v', 'libx264',  # ソフトウェアエンコーダー
+            '-preset', 'ultrafast',  # 最速プリセット
+            '-tune', 'zerolatency',  # 低遅延チューニング
+            '-b:v', '2000k',
+            '-maxrate', '2500k',
+            '-bufsize', '4000k',
+            '-g', str(args.fps * 2),
+            '-bf', '0',
+            args.output,
+        ]
+    else:
+        # 通常のPC環境: NVENCハードウェアエンコーダーを使用
+        print("PC環境を検出しました。NVENCエンコーダーを使用します")
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-pix_fmt', 'bgr24',
+            '-s', f'{args.width}x{args.height}',
+            '-r', str(args.fps),
+            '-i', '-',
+            '-f', 'mpegts',
+            '-codec:v', 'h264_nvenc',  # NVENCハードウェアエンコーダ
+            '-preset', 'p4',
+            '-tune', 'll',
+            '-b:v', '2000k',
+            '-maxrate', '2500k',
+            '-bufsize', '4000k',
+            '-g', str(args.fps * 2),
+            '-bf', '0',
+            args.output,
+        ]
     
     try:
         ffmpeg_process = subprocess.Popen(

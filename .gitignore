@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# TensorRT エンジンファイル（環境依存）
+*.engine
+
+# ONNX モデル（中間ファイル）
+*.onnx
+
+# YOLOv8 モデルファイル（大容量）
+# ※必要に応じてコメントアウトを解除
+# *.pt
+
+# Ultralytics キャッシュ
+runs/
+*.cache
+
+# OpenCV 出力
+*.avi
+*.mp4
+
+# IDE設定
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS固有
+.DS_Store
+Thumbs.db
+
+# ログファイル
+*.log
+
+# テスト用一時ファイル
+test_*.py
+temp/
+tmp/
