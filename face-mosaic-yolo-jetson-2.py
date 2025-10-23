@@ -154,9 +154,19 @@ def main():
     import os
     import torch
     
+    # CUDA利用可否の確認
+    cuda_available = torch.cuda.is_available()
+    if not cuda_available:
+        print("警告: CUDAが利用できません")
+        print(f"torch.cuda.is_available(): {cuda_available}")
+        print("TensorRT変換をスキップし、PyTorchモデルを使用します")
+        print("\nCUDA対応PyTorchのインストール方法:")
+        print("  pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu118")
+        print("=" * 70)
+    
     # TensorRTエンジンファイル名を生成（環境依存）
     # 異なるGPU/TensorRTバージョン間では互換性がないため、デバイス名を含める
-    device_name = torch.cuda.get_device_name(0).replace(' ', '_') if torch.cuda.is_available() else 'cpu'
+    device_name = torch.cuda.get_device_name(0).replace(' ', '_') if cuda_available else 'cpu'
     base_name = args.model.replace('.pt', '')
     engine_file = f"{base_name}_{device_name}.engine"
     
@@ -182,8 +192,12 @@ def main():
             model = YOLO(args.model)
             print("PyTorchモデルの読み込みが完了しました")
             
-            # --no-tensorrtフラグがある場合はTensorRT変換をスキップ
-            if args.no_tensorrt:
+            # CUDAが利用できない、または--no-tensorrtフラグがある場合はTensorRT変換をスキップ
+            if not cuda_available:
+                print("\nCUDAが利用できないため、TensorRT変換をスキップします")
+                print("PyTorchモデル（CPU）をそのまま使用します")
+                model_type = 'PyTorch (CPU)'
+            elif args.no_tensorrt:
                 print("\n--no-tensorrtフラグが指定されたため、TensorRT変換をスキップします")
                 print("PyTorchモデルをそのまま使用します")
                 model_type = 'PyTorch'
