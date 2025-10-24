@@ -33,6 +33,7 @@ import sys
 import argparse
 import threading
 import time
+from collections import deque
 
 try:
     from ultralytics import YOLO
@@ -281,7 +282,7 @@ def main():
     
     if is_jetson:
         # Jetson環境: libx264（ソフトウェアエンコード）を使用
-        print("Jetson環境を検出しました。libx264エンコーダーを使用します")
+        print("Jetson環境を検出しました。libx264エンコーダーを使用します（安定性重視）")
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',
@@ -294,11 +295,10 @@ def main():
             '-f', 'lavfi',
             '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
             '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-tune', 'zerolatency',
+            '-preset', 'faster',
             '-b:v', '2500k',
             '-maxrate', '2500k',
-            '-bufsize', '5000k',
+            '-bufsize', '10000k',
             '-pix_fmt', 'yuv420p',
             '-g', str(args.fps * 2),
             '-c:a', 'aac',
@@ -310,7 +310,7 @@ def main():
         ]
     else:
         # 通常のPC環境: NVENCハードウェアエンコーダーを使用
-        print("PC環境を検出しました。NVENCエンコーダーを使用します")
+        print("PC環境を検出しました。NVENCエンコーダーを使用します（安定性重視）")
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',
@@ -323,11 +323,10 @@ def main():
             '-f', 'lavfi',
             '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
             '-c:v', 'h264_nvenc',
-            '-preset', 'p4',
-            '-tune', 'll',
+            '-preset', 'p2',
             '-b:v', '2500k',
             '-maxrate', '2500k',
-            '-bufsize', '5000k',
+            '-bufsize', '10000k',
             '-pix_fmt', 'yuv420p',
             '-g', str(args.fps * 2),
             '-c:a', 'aac',
@@ -375,17 +374,32 @@ def main():
     frame_count = 0
     total_detections = 0
     start_time = time.time()
+    last_send_time = time.time()
+    skipped_frames = 0
     
     try:
-        print("処理を開始します（Ctrl+Cで終了）\n")
+        print("処理を開始します（Ctrl+Cで終了）")
+        print("安定性重視モード: フレームレートを正確に制御します\n")
         
         while True:
+            # 次のフレームを送信するまでの時間を計算
+            current_time = time.time()
+            time_since_last = current_time - last_send_time
+            
+            # フレーム間隔より早い場合は待機
+            if time_since_last < frame_interval:
+                time.sleep(frame_interval - time_since_last)
+                last_send_time = time.time()
+            else:
+                last_send_time = current_time
+            
             ret, frame = cap.read()
             
             if not ret:
                 print("警告: フレームの取得に失敗しました。再接続を試みます...")
                 cap.release()
                 cap = cv2.VideoCapture(args.rtsp_url)
+                last_send_time = time.time()
                 continue
             
             # フレームをリサイズ
@@ -462,10 +476,12 @@ def main():
                 elapsed_time = time.time() - start_time
                 actual_fps = frame_count / elapsed_time
                 avg_detections = total_detections / frame_count
+                target_fps = args.fps
+                fps_diff = actual_fps - target_fps
                 print(f"処理済み: {frame_count}フレーム | "
                       f"検出数: {len(detected_heads)} | "
                       f"平均: {avg_detections:.2f} | "
-                      f"実FPS: {actual_fps:.1f}")
+                      f"実FPS: {actual_fps:.1f} (目標: {target_fps}, 差: {fps_diff:+.1f})")
                 
     except KeyboardInterrupt:
         print("\n\nキーボード割り込みを検出しました。終了します...")
