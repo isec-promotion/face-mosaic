@@ -371,7 +371,7 @@ def main():
         log_thread.start()
         
         # FFmpegが起動するまで少し待つ
-        time.sleep(2)
+        sleep(2)
         
         # プロセスが生きているか確認
         if ffmpeg_process.poll() is not None:
