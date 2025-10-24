@@ -289,13 +289,14 @@ def main():
             '-f', 'rawvideo',
             '-pix_fmt', 'bgr24',
             '-s', f'{args.width}x{args.height}',
-            '-framerate', str(args.fps),  # 入力フレームレート
+            '-r', str(args.fps),
+            '-re',
             '-i', '-',
             '-f', 'lavfi',
             '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
             # タイムスタンプ/CFR/低遅延
             '-fflags', '+genpts',
-            '-use_wallclock_as_timestamps', '1',
+            # '-use_wallclock_as_timestamps', '1',
             '-vsync', 'cfr',
             # エンコード
             '-c:v', 'libx264',
@@ -325,13 +326,14 @@ def main():
             '-f', 'rawvideo',
             '-pix_fmt', 'bgr24',
             '-s', f'{args.width}x{args.height}',
-            '-framerate', str(args.fps),  # 入力フレームレート
+            '-r', str(args.fps),
+            '-re',
             '-i', '-',
             '-f', 'lavfi',
             '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
             # タイムスタンプ/CFR
             '-fflags', '+genpts',
-            '-use_wallclock_as_timestamps', '1',
+            # '-use_wallclock_as_timestamps', '1',
             '-vsync', 'cfr',
             # エンコード（NVENC 低遅延・CBR 固定GOP）
             '-c:v', 'h264_nvenc',
@@ -401,54 +403,57 @@ def main():
     
     try:
         print("処理を開始します（Ctrl+Cで終了）")
-        print("CFR安定化モード: 正確なタイミング制御でフレームを送出します\n")
+        # FFmpeg側でタイミングを制御するモードであることを表示
+        print("FFmpeg -reモード: FFmpeg側でタイミングを制御します\n")
         
         while True:
+            # ループ開始時間を記録
+            loop_start_time = perf_counter()
+
             ret, frame = cap.read()
             
             if not ret:
                 print("警告: フレームの取得に失敗しました。再接続を試みます...")
                 cap.release()
+                # 接続が切れた場合、再度VideoCaptureを初期化
                 cap = cv2.VideoCapture(args.rtsp_url)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                # スケジュールをリセット
-                next_ts = perf_counter() + frame_interval
                 continue
             
-            # フレームをリサイズ
+            # フレームを指定された解像度にリサイズ
             frame = cv2.resize(frame, (args.width, args.height))
             
-            # YOLOv8で人物検出
+            # YOLOv8で人物検出（クラス0は人物）
             results = model(
                 frame, 
-                classes=[0],  # 人物クラス
+                classes=[0],
                 conf=args.confidence,
                 verbose=False
             )
             
             detected_heads = []
             
-            # 検出結果を処理
+            # 検出結果から頭部領域を計算
             for result in results:
                 boxes = result.boxes
                 for box in boxes:
                     # バウンディングボックスの座標を取得
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                     
-                    # 人物の幅と高さ
+                    # 人物の幅と高さを計算
                     person_w = x2 - x1
                     person_h = y2 - y1
                     
-                    # サイズフィルタリング
+                    # 小さすぎる検出を除外
                     if person_w < 30 or person_h < 50:
                         continue
                     
-                    # アスペクト比チェック
+                    # 不自然なアスペクト比の検出を除外
                     aspect_ratio = person_w / person_h if person_h > 0 else 0
                     if aspect_ratio < 0.2 or aspect_ratio > 3.0:
                         continue
                     
-                    # 頭部領域を計算
+                    # 頭部領域を推定して計算（上下左右に少しマージンを追加）
                     head_h = int(person_h * args.head_ratio)
                     head_x = max(0, x1 - int(person_w * 0.1))
                     head_y = max(0, y1 - int(head_h * 0.1))
@@ -457,49 +462,50 @@ def main():
                     
                     detected_heads.append((head_x, head_y, head_w, head_h))
             
-            # モザイク処理
+            # 検出したすべての頭部領域にモザイクを適用
             for (x, y, w, h) in detected_heads:
                 frame = apply_mosaic(frame, x, y, w, h, ratio=0.05)
-                total_detections += 1
             
-            # 送出タイミング制御：処理後にsleep
-            now = perf_counter()
-            drift = now - next_ts
+            # モザイク処理された人数をカウント
+            total_detections += len(detected_heads)
             
-            if drift < 0:
-                # まだ時間がある場合は待機
-                sleep(-drift)
-            elif drift > frame_interval * 2:
-                # 2フレーム以上遅延している場合はスケジュールを調整（バースト防止）
-                missed = int(drift // frame_interval)
-                next_ts += frame_interval * missed
-                skipped_frames += missed
-            
-            # FFmpegに送信
+            # 処理済みのフレームをFFmpegの標準入力に書き込む
             try:
                 ffmpeg_process.stdin.write(frame.tobytes())
             except BrokenPipeError:
-                print("警告: FFmpegプロセスが終了しました")
+                print("警告: FFmpegプロセスが終了しました。ストリームキーが正しいか確認してください。")
                 break
             except Exception as e:
-                print(f"警告: フレーム送信エラー: {e}")
+                print(f"警告: フレームの送信中にエラーが発生しました: {e}")
                 break
             
-            # 送出後に次の予定時刻を進める（重要）
-            next_ts += frame_interval
+            # --- 新しいタイミング制御ロジック ---
+            # 1フレームの処理に要した時間を計算
+            processing_time = perf_counter() - loop_start_time
             
+            # 目標フレームレートを維持するための待機時間を計算
+            wait_time = frame_interval - processing_time
+            
+            # 処理が早く終わった場合、その差分だけ待機してループの周期を一定に保つ
+            if wait_time > 0:
+                sleep(wait_time)
+            # ------------------------------------
+
             frame_count += 1
+            # 100フレームごとに進捗状況を表示
             if frame_count % 100 == 0:
                 elapsed_time = time() - start_time
                 actual_fps = frame_count / elapsed_time
                 avg_detections = total_detections / frame_count
                 target_fps = args.fps
+                
+                # 処理速度が目標に追いついているかどうかの差分を表示
                 fps_diff = actual_fps - target_fps
+                
                 print(f"処理済み: {frame_count}フレーム | "
                       f"検出数: {len(detected_heads)} | "
-                      f"平均: {avg_detections:.2f} | "
-                      f"実FPS: {actual_fps:.1f} (目標: {target_fps}, 差: {fps_diff:+.1f}) | "
-                      f"スキップ: {skipped_frames}")
+                      f"平均検出: {avg_detections:.2f} | "
+                      f"実FPS: {actual_fps:.1f} (目標: {target_fps}, 差: {fps_diff:+.1f})")
                 
     except KeyboardInterrupt:
         print("\n\nキーボード割り込みを検出しました。終了します...")
