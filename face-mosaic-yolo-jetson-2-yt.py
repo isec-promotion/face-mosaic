@@ -32,7 +32,7 @@ import subprocess
 import sys
 import argparse
 import threading
-import time
+from time import perf_counter, sleep, time
 from collections import deque
 
 try:
@@ -282,57 +282,74 @@ def main():
     
     if is_jetson:
         # Jetson環境: libx264（ソフトウェアエンコード）を使用
-        print("Jetson環境を検出しました。libx264エンコーダーを使用します（安定性重視）")
+        print("Jetson環境を検出しました。libx264エンコーダーを使用します（CFR/低遅延）")
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',
             '-f', 'rawvideo',
-            '-vcodec', 'rawvideo',
             '-pix_fmt', 'bgr24',
             '-s', f'{args.width}x{args.height}',
-            '-r', str(args.fps),
+            '-framerate', str(args.fps),  # 入力フレームレート
             '-i', '-',
             '-f', 'lavfi',
             '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+            # タイムスタンプ/CFR/低遅延
+            '-fflags', '+genpts',
+            '-use_wallclock_as_timestamps', '1',
+            '-vsync', 'cfr',
+            # エンコード
             '-c:v', 'libx264',
-            '-preset', 'faster',
+            '-preset', 'veryfast',
+            '-tune', 'zerolatency',
             '-b:v', '2500k',
             '-maxrate', '2500k',
-            '-bufsize', '10000k',
-            '-pix_fmt', 'yuv420p',
+            '-bufsize', '5000k',
+            '-sc_threshold', '0',
             '-g', str(args.fps * 2),
+            '-pix_fmt', 'yuv420p',
+            # 音声
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
-            '-shortest',
+            # RTMP FLV
+            '-flvflags', 'no_duration_filesize',
             '-f', 'flv',
             youtube_url,
         ]
     else:
         # 通常のPC環境: NVENCハードウェアエンコーダーを使用
-        print("PC環境を検出しました。NVENCエンコーダーを使用します（安定性重視）")
+        print("PC環境を検出しました。NVENCエンコーダーを使用します（CFR/低遅延）")
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',
             '-f', 'rawvideo',
-            '-vcodec', 'rawvideo',
             '-pix_fmt', 'bgr24',
             '-s', f'{args.width}x{args.height}',
-            '-r', str(args.fps),
+            '-framerate', str(args.fps),  # 入力フレームレート
             '-i', '-',
             '-f', 'lavfi',
             '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+            # タイムスタンプ/CFR
+            '-fflags', '+genpts',
+            '-use_wallclock_as_timestamps', '1',
+            '-vsync', 'cfr',
+            # エンコード（NVENC 低遅延・CBR 固定GOP）
             '-c:v', 'h264_nvenc',
-            '-preset', 'p2',
+            '-tune', 'll',
+            '-rc', 'cbr',
             '-b:v', '2500k',
             '-maxrate', '2500k',
-            '-bufsize', '10000k',
-            '-pix_fmt', 'yuv420p',
+            '-bufsize', '5000k',
+            '-bf', '0',
+            '-sc_threshold', '0',
             '-g', str(args.fps * 2),
+            '-pix_fmt', 'yuv420p',
+            # 音声
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
-            '-shortest',
+            # RTMP FLV
+            '-flvflags', 'no_duration_filesize',
             '-f', 'flv',
             youtube_url,
         ]
@@ -373,33 +390,29 @@ def main():
     
     frame_count = 0
     total_detections = 0
-    start_time = time.time()
-    last_send_time = time.time()
+    start_time = time()
     skipped_frames = 0
+    
+    # OpenCVの内部バッファを浅く（効くバックエンドの場合）
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
+    # 送出タイミング制御用
+    next_ts = perf_counter() + frame_interval
     
     try:
         print("処理を開始します（Ctrl+Cで終了）")
-        print("安定性重視モード: フレームレートを正確に制御します\n")
+        print("CFR安定化モード: 正確なタイミング制御でフレームを送出します\n")
         
         while True:
-            # 次のフレームを送信するまでの時間を計算
-            current_time = time.time()
-            time_since_last = current_time - last_send_time
-            
-            # フレーム間隔より早い場合は待機
-            if time_since_last < frame_interval:
-                time.sleep(frame_interval - time_since_last)
-                last_send_time = time.time()
-            else:
-                last_send_time = current_time
-            
             ret, frame = cap.read()
             
             if not ret:
                 print("警告: フレームの取得に失敗しました。再接続を試みます...")
                 cap.release()
                 cap = cv2.VideoCapture(args.rtsp_url)
-                last_send_time = time.time()
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                # スケジュールをリセット
+                next_ts = perf_counter() + frame_interval
                 continue
             
             # フレームをリサイズ
@@ -420,11 +433,7 @@ def main():
                 boxes = result.boxes
                 for box in boxes:
                     # バウンディングボックスの座標を取得
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    confidence = box.conf[0].cpu().numpy()
-                    
-                    # 整数に変換
-                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                     
                     # 人物の幅と高さ
                     person_w = x2 - x1
@@ -441,25 +450,30 @@ def main():
                     
                     # 頭部領域を計算
                     head_h = int(person_h * args.head_ratio)
-                    head_y = y1
-                    head_x = x1
-                    head_w = person_w
+                    head_x = max(0, x1 - int(person_w * 0.1))
+                    head_y = max(0, y1 - int(head_h * 0.1))
+                    head_w = min(args.width - head_x, person_w + int(person_w * 0.2))
+                    head_h = min(args.height - head_y, head_h + int(head_h * 0.2))
                     
-                    # 頭部領域を少し拡大
-                    margin_w = int(head_w * 0.1)
-                    margin_h = int(head_h * 0.1)
-                    
-                    head_x = max(0, head_x - margin_w)
-                    head_y = max(0, head_y - margin_h)
-                    head_w = min(args.width - head_x, head_w + margin_w * 2)
-                    head_h = min(args.height - head_y, head_h + margin_h * 2)
-                    
-                    detected_heads.append((head_x, head_y, head_w, head_h, confidence))
+                    detected_heads.append((head_x, head_y, head_w, head_h))
             
             # モザイク処理
-            for (x, y, w, h, conf) in detected_heads:
+            for (x, y, w, h) in detected_heads:
                 frame = apply_mosaic(frame, x, y, w, h, ratio=0.05)
                 total_detections += 1
+            
+            # 送出タイミング制御：処理後にsleep
+            now = perf_counter()
+            drift = now - next_ts
+            
+            if drift < 0:
+                # まだ時間がある場合は待機
+                sleep(-drift)
+            elif drift > frame_interval * 2:
+                # 2フレーム以上遅延している場合はスケジュールを調整（バースト防止）
+                missed = int(drift // frame_interval)
+                next_ts += frame_interval * missed
+                skipped_frames += missed
             
             # FFmpegに送信
             try:
@@ -471,9 +485,12 @@ def main():
                 print(f"警告: フレーム送信エラー: {e}")
                 break
             
+            # 送出後に次の予定時刻を進める（重要）
+            next_ts += frame_interval
+            
             frame_count += 1
             if frame_count % 100 == 0:
-                elapsed_time = time.time() - start_time
+                elapsed_time = time() - start_time
                 actual_fps = frame_count / elapsed_time
                 avg_detections = total_detections / frame_count
                 target_fps = args.fps
@@ -481,7 +498,8 @@ def main():
                 print(f"処理済み: {frame_count}フレーム | "
                       f"検出数: {len(detected_heads)} | "
                       f"平均: {avg_detections:.2f} | "
-                      f"実FPS: {actual_fps:.1f} (目標: {target_fps}, 差: {fps_diff:+.1f})")
+                      f"実FPS: {actual_fps:.1f} (目標: {target_fps}, 差: {fps_diff:+.1f}) | "
+                      f"スキップ: {skipped_frames}")
                 
     except KeyboardInterrupt:
         print("\n\nキーボード割り込みを検出しました。終了します...")
