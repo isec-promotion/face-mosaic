@@ -31,6 +31,8 @@ import numpy as np
 import subprocess
 import sys
 import argparse
+import threading
+import time
 
 try:
     from ultralytics import YOLO
@@ -39,6 +41,18 @@ except ImportError:
     print("以下のコマンドでインストールしてください:")
     print("  pip install ultralytics")
     sys.exit(1)
+
+def log_ffmpeg_output(process):
+    """FFmpegの出力をログに記録"""
+    while True:
+        line = process.stderr.readline()
+        if not line:
+            break
+        line = line.decode('utf-8', errors='ignore').strip()
+        if line:
+            # 重要なメッセージのみ表示
+            if any(keyword in line.lower() for keyword in ['error', 'warning', 'failed', 'connection']):
+                print(f"[FFmpeg] {line}")
 
 def apply_mosaic(image, x, y, w, h, ratio=0.05):
     """
@@ -267,14 +281,20 @@ def main():
             '-s', f'{args.width}x{args.height}',
             '-r', str(args.fps),
             '-i', '-',
-            '-c:v', 'libx264',  # ソフトウェアエンコーダー
-            '-preset', 'ultrafast',  # 最速プリセット
-            '-tune', 'zerolatency',  # 低遅延チューニング
+            '-f', 'lavfi',
+            '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-tune', 'zerolatency',
             '-b:v', '2500k',
             '-maxrate', '2500k',
             '-bufsize', '5000k',
             '-pix_fmt', 'yuv420p',
             '-g', str(args.fps * 2),
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-shortest',
             '-f', 'flv',
             youtube_url,
         ]
@@ -290,7 +310,9 @@ def main():
             '-s', f'{args.width}x{args.height}',
             '-r', str(args.fps),
             '-i', '-',
-            '-c:v', 'h264_nvenc',  # NVENCハードウェアエンコーダ
+            '-f', 'lavfi',
+            '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+            '-c:v', 'h264_nvenc',
             '-preset', 'p4',
             '-tune', 'll',
             '-b:v', '2500k',
@@ -298,18 +320,41 @@ def main():
             '-bufsize', '5000k',
             '-pix_fmt', 'yuv420p',
             '-g', str(args.fps * 2),
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-shortest',
             '-f', 'flv',
             youtube_url,
         ]
     
     try:
+        print("\nFFmpegを起動しています...")
+        print("FFmpegコマンド:")
+        print(" ".join(ffmpeg_cmd[:15]) + " ... " + ffmpeg_cmd[-1])
+        
         ffmpeg_process = subprocess.Popen(
             ffmpeg_cmd,
             stdin=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            bufsize=10**8
         )
-        print("YouTube Liveへのストリーミングを開始しました")
-        print("YouTube Studio (https://studio.youtube.com) で配信状況を確認してください\n")
+        
+        # FFmpegのログを別スレッドで監視
+        log_thread = threading.Thread(target=log_ffmpeg_output, args=(ffmpeg_process,), daemon=True)
+        log_thread.start()
+        
+        # FFmpegが起動するまで少し待つ
+        time.sleep(2)
+        
+        # プロセスが生きているか確認
+        if ffmpeg_process.poll() is not None:
+            print("\n警告: FFmpegプロセスが予期せず終了しました")
+            print("ストリームキーが正しいか確認してください")
+        else:
+            print("\nYouTube Liveへのストリーミングを開始しました")
+            print("YouTube Studio (https://studio.youtube.com) で配信状況を確認してください")
+            print("※配信が開始されるまで数秒〜数十秒かかる場合があります\n")
         
     except FileNotFoundError:
         print("エラー: FFmpegが見つかりません")
