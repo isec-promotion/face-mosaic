@@ -128,8 +128,8 @@ def parse_arguments():
                        help='出力映像の高さ (デフォルト: 720)')
     parser.add_argument('--fps', '-f',
                        type=int,
-                       default=25,
-                       help='フレームレート (デフォルト: 25)')
+                       default=30,
+                       help='フレームレート (デフォルト: 30)')
     parser.add_argument('--model', '-m',
                        default='yolov8n.pt',
                        choices=['yolov8n.pt', 'yolov8s.pt', 'yolov8m.pt', 'yolov8l.pt'],
@@ -374,29 +374,18 @@ def main():
     
     frame_count = 0
     total_detections = 0
-    last_frame_time = time.time()
+    start_time = time.time()
     
     try:
         print("処理を開始します（Ctrl+Cで終了）\n")
         
         while True:
-            # フレームレート制御
-            current_time = time.time()
-            elapsed = current_time - last_frame_time
-            
-            # 次のフレームまで待機
-            if elapsed < frame_interval:
-                time.sleep(frame_interval - elapsed)
-            
-            last_frame_time = time.time()
-            
             ret, frame = cap.read()
             
             if not ret:
                 print("警告: フレームの取得に失敗しました。再接続を試みます...")
                 cap.release()
                 cap = cv2.VideoCapture(args.rtsp_url)
-                last_frame_time = time.time()  # タイマーをリセット
                 continue
             
             # フレームをリサイズ
@@ -461,7 +450,6 @@ def main():
             # FFmpegに送信
             try:
                 ffmpeg_process.stdin.write(frame.tobytes())
-                ffmpeg_process.stdin.flush()  # バッファをフラッシュ
             except BrokenPipeError:
                 print("警告: FFmpegプロセスが終了しました")
                 break
@@ -471,8 +459,9 @@ def main():
             
             frame_count += 1
             if frame_count % 100 == 0:
+                elapsed_time = time.time() - start_time
+                actual_fps = frame_count / elapsed_time
                 avg_detections = total_detections / frame_count
-                actual_fps = 100 / (time.time() - last_frame_time + 100 * frame_interval)
                 print(f"処理済み: {frame_count}フレーム | "
                       f"検出数: {len(detected_heads)} | "
                       f"平均: {avg_detections:.2f} | "
