@@ -265,6 +265,16 @@ def main():
     
     print("接続成功")
     
+    # ソースのFPSを取得
+    source_fps = cap.get(cv2.CAP_PROP_FPS)
+    if source_fps > 0 and source_fps != args.fps:
+        print(f"\n注意: ソースのFPS({source_fps:.1f})と指定されたFPS({args.fps})が異なります")
+        print(f"指定されたFPS({args.fps})を使用します")
+    
+    # フレーム送信の間隔を計算（秒）
+    frame_interval = 1.0 / args.fps
+    print(f"フレーム送信間隔: {frame_interval:.4f}秒 ({args.fps}fps)")
+    
     # 環境に応じたFFmpegエンコーダーの選択
     import platform
     is_jetson = os.path.exists('/etc/nv_tegra_release') or 'tegra' in platform.platform().lower()
@@ -364,17 +374,29 @@ def main():
     
     frame_count = 0
     total_detections = 0
+    last_frame_time = time.time()
     
     try:
         print("処理を開始します（Ctrl+Cで終了）\n")
         
         while True:
+            # フレームレート制御
+            current_time = time.time()
+            elapsed = current_time - last_frame_time
+            
+            # 次のフレームまで待機
+            if elapsed < frame_interval:
+                time.sleep(frame_interval - elapsed)
+            
+            last_frame_time = time.time()
+            
             ret, frame = cap.read()
             
             if not ret:
                 print("警告: フレームの取得に失敗しました。再接続を試みます...")
                 cap.release()
                 cap = cv2.VideoCapture(args.rtsp_url)
+                last_frame_time = time.time()  # タイマーをリセット
                 continue
             
             # フレームをリサイズ
@@ -439,16 +461,22 @@ def main():
             # FFmpegに送信
             try:
                 ffmpeg_process.stdin.write(frame.tobytes())
+                ffmpeg_process.stdin.flush()  # バッファをフラッシュ
             except BrokenPipeError:
                 print("警告: FFmpegプロセスが終了しました")
+                break
+            except Exception as e:
+                print(f"警告: フレーム送信エラー: {e}")
                 break
             
             frame_count += 1
             if frame_count % 100 == 0:
                 avg_detections = total_detections / frame_count
+                actual_fps = 100 / (time.time() - last_frame_time + 100 * frame_interval)
                 print(f"処理済み: {frame_count}フレーム | "
                       f"検出数: {len(detected_heads)} | "
-                      f"平均: {avg_detections:.2f}")
+                      f"平均: {avg_detections:.2f} | "
+                      f"実FPS: {actual_fps:.1f}")
                 
     except KeyboardInterrupt:
         print("\n\nキーボード割り込みを検出しました。終了します...")
