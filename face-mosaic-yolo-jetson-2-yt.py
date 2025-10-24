@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 """
-監視カメラ映像の顔モザイク処理（Jetson最適化版 - GStreamer不使用）
+監視カメラ映像の顔モザイク処理（YouTube配信専用版 - プレビューなし）
 
-NVIDIA Jetson向けに最適化された顔モザイク処理実装（GStreamer不使用版）。
+NVIDIA Jetson向けに最適化された顔モザイク処理実装（YouTube配信専用版）。
 - YOLOv8による高精度人物検出
 - TensorRT推論エンジン（自動変換・FP16精度）
 - 通常のRTSPデコード（GStreamer不使用）
 - ハードウェアエンコード（NVENC）
+- プレビューウィンドウなし（配信専用）
 
 技術ブログ用のリファレンス実装です。
 
 使用方法:
-    python face-mosaic-yolo-jetson-2.py <rtsp_url> [options]
+    python face-mosaic-yolo-jetson-2-yt.py <rtsp_url> <stream_key> [options]
 
 例:
-    python face-mosaic-yolo-jetson-2.py "rtsp://admin:password@192.168.1.100:554/stream"
-    python face-mosaic-yolo-jetson-2.py "rtsp://camera/stream" --output udp://127.0.0.1:9000
-    python face-mosaic-yolo-jetson-2.py "rtsp://camera/stream" --model yolov8s.pt --confidence 0.6
+    python face-mosaic-yolo-jetson-2-yt.py "rtsp://admin:password@192.168.1.100:554/stream" "xxxx-xxxx-xxxx-xxxx"
+    python face-mosaic-yolo-jetson-2-yt.py "rtsp://camera/stream" "your-stream-key" --model yolov8s.pt --confidence 0.6
 
 機能:
     - 初回実行時に自動的にTensorRTエンジン（.engine）を生成
     - 2回目以降は高速なTensorRTエンジンを使用
     - 通常のcv2.VideoCapture()でRTSPストリームをデコード（GStreamer不要）
     - NVENCによるハードウェアエンコード（CPU負荷削減）
+    - プレビューウィンドウなし（リソース節約、YouTube配信に最適）
 """
 
 import cv2
@@ -81,14 +82,15 @@ def apply_mosaic(image, x, y, w, h, ratio=0.05):
 def parse_arguments():
     """コマンドライン引数を解析"""
     parser = argparse.ArgumentParser(
-        description='監視カメラ映像の顔モザイク処理（Jetson最適化版 - GStreamer不使用）',
+        description='監視カメラ映像の顔モザイク処理（YouTube配信専用版 - プレビューなし）',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 例:
-  %(prog)s "rtsp://admin:password@192.168.1.100:554/stream"
-  %(prog)s "rtsp://camera/stream" --output udp://127.0.0.1:9000
-  %(prog)s "rtsp://camera/stream" --model yolov8s.pt --confidence 0.6
-  %(prog)s "rtsp://camera/stream" --width 1920 --height 1080 --fps 30
+  %(prog)s "rtsp://admin:password@192.168.1.100:554/stream" "xxxx-xxxx-xxxx-xxxx"
+  %(prog)s "rtsp://camera/stream" "your-stream-key" --model yolov8s.pt --confidence 0.6
+  %(prog)s "rtsp://camera/stream" "your-stream-key" --width 1920 --height 1080 --fps 30
+
+配信先: rtmp://a.rtmp.youtube.com/live2 (YouTube Live固定)
 
 モデルの選択:
   yolov8n.pt: Nano (最速、メモリ少)
@@ -100,9 +102,8 @@ def parse_arguments():
     
     parser.add_argument('rtsp_url', 
                        help='監視カメラのRTSPストリームURL')
-    parser.add_argument('--output', '-o',
-                       default='udp://127.0.0.1:8080',
-                       help='出力ストリームURL (デフォルト: udp://127.0.0.1:8080)')
+    parser.add_argument('stream_key',
+                       help='YouTubeライブストリーミングキー')
     parser.add_argument('--width', '-W',
                        type=int,
                        default=1280,
@@ -127,9 +128,6 @@ def parse_arguments():
                        type=float,
                        default=0.25,
                        help='頭部領域の割合 0.1-0.5 (デフォルト: 0.25)')
-    parser.add_argument('--no-preview',
-                       action='store_true',
-                       help='プレビューウィンドウを表示しない')
     parser.add_argument('--no-tensorrt',
                        action='store_true',
                        help='TensorRT変換をスキップしてPyTorchモデルを使用')
@@ -140,11 +138,14 @@ def main():
     # コマンドライン引数を解析
     args = parse_arguments()
     
+    # YouTube RTMPストリームURL
+    youtube_url = f"rtmp://a.rtmp.youtube.com/live2/{args.stream_key}"
+    
     print("=" * 70)
-    print("監視カメラ映像の顔モザイク処理（Jetson最適化版 - GStreamer不使用）")
+    print("監視カメラ映像の顔モザイク処理（YouTube配信専用版 - プレビューなし）")
     print("=" * 70)
     print(f"入力: {args.rtsp_url}")
-    print(f"出力: {args.output}")
+    print(f"出力: rtmp://a.rtmp.youtube.com/live2/****")
     print(f"解像度: {args.width}x{args.height} @ {args.fps}fps")
     print(f"モデル: {args.model}")
     print(f"検出パラメータ: confidence={args.confidence}, head_ratio={args.head_ratio}")
@@ -256,7 +257,6 @@ def main():
     
     if is_jetson:
         # Jetson環境: libx264（ソフトウェアエンコード）を使用
-        # Jetsonのハードウェアエンコーダー（omx/nvv4l2）はGStreamerで使用
         print("Jetson環境を検出しました。libx264エンコーダーを使用します")
         ffmpeg_cmd = [
             'ffmpeg',
@@ -267,16 +267,16 @@ def main():
             '-s', f'{args.width}x{args.height}',
             '-r', str(args.fps),
             '-i', '-',
-            '-f', 'mpegts',
-            '-codec:v', 'libx264',  # ソフトウェアエンコーダー
+            '-c:v', 'libx264',  # ソフトウェアエンコーダー
             '-preset', 'ultrafast',  # 最速プリセット
             '-tune', 'zerolatency',  # 低遅延チューニング
-            '-b:v', '2000k',
+            '-b:v', '2500k',
             '-maxrate', '2500k',
-            '-bufsize', '4000k',
+            '-bufsize', '5000k',
+            '-pix_fmt', 'yuv420p',
             '-g', str(args.fps * 2),
-            '-bf', '0',
-            args.output,
+            '-f', 'flv',
+            youtube_url,
         ]
     else:
         # 通常のPC環境: NVENCハードウェアエンコーダーを使用
@@ -290,16 +290,16 @@ def main():
             '-s', f'{args.width}x{args.height}',
             '-r', str(args.fps),
             '-i', '-',
-            '-f', 'mpegts',
-            '-codec:v', 'h264_nvenc',  # NVENCハードウェアエンコーダ
+            '-c:v', 'h264_nvenc',  # NVENCハードウェアエンコーダ
             '-preset', 'p4',
             '-tune', 'll',
-            '-b:v', '2000k',
+            '-b:v', '2500k',
             '-maxrate', '2500k',
-            '-bufsize', '4000k',
+            '-bufsize', '5000k',
+            '-pix_fmt', 'yuv420p',
             '-g', str(args.fps * 2),
-            '-bf', '0',
-            args.output,
+            '-f', 'flv',
+            youtube_url,
         ]
     
     try:
@@ -308,8 +308,8 @@ def main():
             stdin=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        print("ストリーミングを開始しました")
-        print(f"\nVLCで視聴: vlc {args.output}\n")
+        print("YouTube Liveへのストリーミングを開始しました")
+        print("YouTube Studio (https://studio.youtube.com) で配信状況を確認してください\n")
         
     except FileNotFoundError:
         print("エラー: FFmpegが見つかりません")
@@ -321,7 +321,7 @@ def main():
     total_detections = 0
     
     try:
-        print("処理を開始します（'q'キーで終了）\n")
+        print("処理を開始します（Ctrl+Cで終了）\n")
         
         while True:
             ret, frame = cap.read()
@@ -404,18 +404,6 @@ def main():
                 print(f"処理済み: {frame_count}フレーム | "
                       f"検出数: {len(detected_heads)} | "
                       f"平均: {avg_detections:.2f}")
-            
-            # プレビュー表示
-            if not args.no_preview:
-                cv2.putText(frame, f'Detected: {len(detected_heads)} people', 
-                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                           1, (0, 255, 0), 2)
-                cv2.imshow('YOLOv8 Face Mosaic (Press Q to quit)', frame)
-                
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    print("\n終了します...")
-                    break
                 
     except KeyboardInterrupt:
         print("\n\nキーボード割り込みを検出しました。終了します...")
@@ -424,7 +412,6 @@ def main():
         # クリーンアップ
         print("リソースを解放しています...")
         cap.release()
-        cv2.destroyAllWindows()
         
         if ffmpeg_process:
             try:
