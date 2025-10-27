@@ -55,6 +55,57 @@ def log_ffmpeg_output(process):
             if any(keyword in line.lower() for keyword in ['error', 'warning', 'failed', 'connection']):
                 print(f"[FFmpeg] {line}")
 
+class ThreadedVideoCapture:
+    """
+    RTSPストリームの読み込みを別スレッドで行い、
+    常に最新のフレームのみを保持するクラス
+    """
+    def __init__(self, src, max_queue_size=1):
+        self.cap = cv2.VideoCapture(src)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, max_queue_size)
+        
+        # dequeをサイズ1で作成し、常に最新のフレームのみ保持
+        self.q = deque(maxlen=max_queue_size)
+        self.status = "stopped"
+        self.thread = threading.Thread(target=self._update, daemon=True)
+
+    def _update(self):
+        print("[ThreadedVideoCapture] 読み取りスレッドを開始")
+        while self.status == "running":
+            ret, frame = self.cap.read()
+            if not ret:
+                print("[ThreadedVideoCapture] フレーム取得失敗。再接続試行...")
+                self.cap.release()
+                sleep(1)
+                self.cap = cv2.VideoCapture(self.cap.getBackendName())
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                continue
+            
+            # dequeにフレームを追加（古いフレームは自動的に破棄）
+            self.q.append(frame)
+        
+        print("[ThreadedVideoCapture] 読み取りスレッドを停止")
+        self.cap.release()
+
+    def start(self):
+        if self.status == "stopped":
+            self.status = "running"
+            self.thread.start()
+        return self
+
+    def read(self):
+        # キューにフレームがあれば、それを返す
+        try:
+            return self.q.pop()
+        except IndexError:
+            # キューが空の場合
+            return None
+
+    def stop(self):
+        self.status = "stopped"
+        if self.thread.is_alive():
+            self.thread.join(timeout=2)
+
 def apply_mosaic(image, x, y, w, h, ratio=0.05):
     """
     指定された領域にモザイク処理を適用
@@ -254,107 +305,53 @@ def main():
     print(f"使用するモデル形式: {model_type}")
     print("=" * 70)
     
-    # 通常のcv2.VideoCaptureでRTSPストリームを開く（GStreamer不使用）
-    print("RTSPストリームに接続しています（通常デコード）...")
+    # 通常のcv2.VideoCaptureでRTSPストリームを開く（スレッド化）
+    print("RTSPストリームに接続しています（スレッド読み取り）...")
     
-    cap = cv2.VideoCapture(args.rtsp_url)
+    cap = ThreadedVideoCapture(args.rtsp_url).start()
     
-    if not cap.isOpened():
-        print("エラー: RTSPストリームを開けませんでした")
-        print("URLが正しいか、カメラが動作しているか確認してください")
-        sys.exit(1)
+    # 最初のフレームが読み込めるまで少し待つ
+    sleep(2)
     
     print("接続成功")
     
-    # ソースのFPSを取得
-    source_fps = cap.get(cv2.CAP_PROP_FPS)
-    if source_fps > 0 and source_fps != args.fps:
-        print(f"\n注意: ソースのFPS({source_fps:.1f})と指定されたFPS({args.fps})が異なります")
-        print(f"指定されたFPS({args.fps})を使用します")
-    
-    # フレーム送信の間隔を計算（秒）
-    frame_interval = 1.0 / args.fps
-    print(f"フレーム送信間隔: {frame_interval:.4f}秒 ({args.fps}fps)")
-    
-    # 環境に応じたFFmpegエンコーダーの選択
-    import platform
-    is_jetson = os.path.exists('/etc/nv_tegra_release') or 'tegra' in platform.platform().lower()
-    
-    if is_jetson:
-        # Jetson環境: libx264（ソフトウェアエンコード）を使用
-        print("Jetson環境を検出しました。libx264エンコーダーを使用します（CFR/低遅延）")
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y',
-            '-f', 'rawvideo',
-            '-pix_fmt', 'bgr24',
-            '-s', f'{args.width}x{args.height}',
-            '-r', str(args.fps),
-            '-re',
-            '-i', '-',
-            '-f', 'lavfi',
-            '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-            # タイムスタンプ/CFR/低遅延
-            '-fflags', '+genpts',
-            # '-use_wallclock_as_timestamps', '1',
-            '-vsync', 'cfr',
-            # エンコード
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-tune', 'zerolatency',
-            '-b:v', '2500k',
-            '-maxrate', '2500k',
-            '-bufsize', '5000k',
-            '-sc_threshold', '0',
-            '-g', str(args.fps * 2),
-            '-pix_fmt', 'yuv420p',
-            # 音声
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
-            # RTMP FLV
-            '-flvflags', 'no_duration_filesize',
-            '-f', 'flv',
-            youtube_url,
-        ]
-    else:
-        # 通常のPC環境: NVENCハードウェアエンコーダーを使用
-        print("PC環境を検出しました。NVENCエンコーダーを使用します（CFR/低遅延）")
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y',
-            '-f', 'rawvideo',
-            '-pix_fmt', 'bgr24',
-            '-s', f'{args.width}x{args.height}',
-            '-r', str(args.fps),
-            '-re',
-            '-i', '-',
-            '-f', 'lavfi',
-            '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-            # タイムスタンプ/CFR
-            '-fflags', '+genpts',
-            # '-use_wallclock_as_timestamps', '1',
-            '-vsync', 'cfr',
-            # エンコード（NVENC 低遅延・CBR 固定GOP）
-            '-c:v', 'h264_nvenc',
-            '-tune', 'll',
-            '-rc', 'cbr',
-            '-b:v', '2500k',
-            '-maxrate', '2500k',
-            '-bufsize', '5000k',
-            '-bf', '0',
-            '-sc_threshold', '0',
-            '-g', str(args.fps * 2),
-            '-pix_fmt', 'yuv420p',
-            # 音声
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
-            # RTMP FLV
-            '-flvflags', 'no_duration_filesize',
-            '-f', 'flv',
-            youtube_url,
-        ]
+    # ハードウェアエンコーダー（h264_nvenc）を使用
+    print("ハードウェアエンコーダー（h264_nvenc）を使用します（CFR/低遅延）")
+    ffmpeg_cmd = [
+        'ffmpeg',
+        '-y',
+        '-f', 'rawvideo',
+        '-pix_fmt', 'bgr24',
+        '-s', f'{args.width}x{args.height}',
+        '-r', str(args.fps),
+        '-re',
+        '-i', '-',
+        '-f', 'lavfi',
+        '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+        # タイムスタンプ/CFR
+        '-fflags', '+genpts',
+        # '-use_wallclock_as_timestamps', '1',
+        '-vsync', 'cfr',
+        # エンコード（NVENC 低遅延・CBR 固定GOP）
+        '-c:v', 'h264_nvenc',
+        '-tune', 'll',
+        '-rc', 'cbr',
+        '-b:v', '2500k',
+        '-maxrate', '2500k',
+        '-bufsize', '5000k',
+        '-bf', '0',
+        '-sc_threshold', '0',
+        '-g', str(args.fps * 2),
+        '-pix_fmt', 'yuv420p',
+        # 音声
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ar', '44100',
+        # RTMP FLV
+        '-flvflags', 'no_duration_filesize',
+        '-f', 'flv',
+        youtube_url,
+    ]
     
     try:
         print("\nFFmpegを起動しています...")
@@ -395,29 +392,17 @@ def main():
     start_time = time()
     skipped_frames = 0
     
-    # OpenCVの内部バッファを浅く（効くバックエンドの場合）
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    
-    # 送出タイミング制御用
-    next_ts = perf_counter() + frame_interval
-    
     try:
         print("処理を開始します（Ctrl+Cで終了）")
         # FFmpeg側でタイミングを制御するモードであることを表示
         print("FFmpeg -reモード: FFmpeg側でタイミングを制御します\n")
         
         while True:
-            # ループ開始時間を記録
-            loop_start_time = perf_counter()
-
-            ret, frame = cap.read()
+            frame = cap.read()
             
-            if not ret:
-                print("警告: フレームの取得に失敗しました。再接続を試みます...")
-                cap.release()
-                # 接続が切れた場合、再度VideoCaptureを初期化
-                cap = cv2.VideoCapture(args.rtsp_url)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if frame is None:
+                # キューにフレームが溜まるまで少し待つ
+                sleep(0.01)
                 continue
             
             # フレームを指定された解像度にリサイズ
@@ -479,18 +464,6 @@ def main():
                 print(f"警告: フレームの送信中にエラーが発生しました: {e}")
                 break
             
-            # --- 新しいタイミング制御ロジック ---
-            # 1フレームの処理に要した時間を計算
-            processing_time = perf_counter() - loop_start_time
-            
-            # 目標フレームレートを維持するための待機時間を計算
-            wait_time = frame_interval - processing_time
-            
-            # 処理が早く終わった場合、その差分だけ待機してループの周期を一定に保つ
-            if wait_time > 0:
-                sleep(wait_time)
-            # ------------------------------------
-
             frame_count += 1
             # 100フレームごとに進捗状況を表示
             if frame_count % 100 == 0:
@@ -513,7 +486,7 @@ def main():
     finally:
         # クリーンアップ
         print("リソースを解放しています...")
-        cap.release()
+        cap.stop()
         
         if ffmpeg_process:
             try:
