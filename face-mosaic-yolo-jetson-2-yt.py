@@ -350,16 +350,15 @@ def main():
         '-fflags', '+genpts',
         '-vsync', 'cfr',
         
-        # --- 修正箇所 (Jetson向けNVENC設定) ---
+        # --- 修正箇所 (Jetson向けNVENC設定 Ver.3) ---
         '-c:v', 'h264_nvenc',
-        # '-tune', 'll',          # 削除: Jetsonではサポートされていない
-        '-preset', 'fast',     # 変更: -tune ll の代わりに -preset fast を指定
-        '-rc', 'cbr',          # Note: これも環境によっては 'vbr' や 'constqp' の方が安定する場合があります
+        # '-preset', 'fast',     # 削除: サポートされていない可能性
+        # '-rc', 'cbr',          # 削除: サポートされていない可能性
         # --- 修正ここまで ---
         
         '-b:v', '2500k',
-        '-maxrate', '2500k',
-        '-bufsize', '5000k',
+        '-maxrate', '2500k', # -b:v と同じ値にすることでCBRに近づける
+        '-bufsize', '5000k', # maxrate の2倍程度
         '-bf', '0',
         '-sc_threshold', '0',
         '-g', str(args.fps * 2),
