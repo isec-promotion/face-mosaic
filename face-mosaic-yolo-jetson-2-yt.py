@@ -44,16 +44,22 @@ except ImportError:
     sys.exit(1)
 
 def log_ffmpeg_output(process):
-    """FFmpegの出力をログに記録"""
     while True:
         line = process.stderr.readline()
         if not line:
             break
         line = line.decode('utf-8', errors='ignore').strip()
-        if line:
-            # 重要なメッセージのみ表示
-            if any(keyword in line.lower() for keyword in ['error', 'warning', 'failed', 'connection']):
-                print(f"[FFmpeg] {line}")
+        if not line:
+            continue
+        # ★ 全部表示（最初はこれが確実）
+        print(f"[FFmpeg] {line}")
+
+        # もし絞るなら下記のように増やす
+        # if any(k in line.lower() for k in ['error','warning','failed','connection',
+        #                                    'unrecognized option','unknown encoder',
+        #                                    'invalid argument','option not found']):
+        #     print(f"[FFmpeg] {line}")
+
 
 class ThreadedVideoCapture:
     """
