@@ -333,8 +333,8 @@ def main():
     
     print("接続成功")
     
-    # ハードウェアエンコーダー（h264_nvenc）を使用
-    print("ハードウェアエンコーダー（h264_nvenc）を使用します（CFR/低遅延）")
+    # ハードウェアエンコーダー（h264_nvmpi）を使用
+    print("ハードウェアエンコーダー（h264_nvmpi）を使用します（CFR/低遅延）")
     ffmpeg_cmd = [
         'ffmpeg',
         '-y',
@@ -351,7 +351,7 @@ def main():
         '-vsync', 'cfr',
         
         # --- 修正箇所 (Jetson向けNVENC設定 Ver.3) ---
-        '-c:v', 'h264_nvenc',
+        '-c:v', 'h264_nvmpi',
         # '-preset', 'fast',     # 削除: サポートされていない可能性
         # '-rc', 'cbr',          # 削除: サポートされていない可能性
         # --- 修正ここまで ---
