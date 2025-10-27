@@ -12,11 +12,11 @@ NVIDIA Jetson向けに最適化された顔モザイク処理実装（YouTube配
 技術ブログ用のリファレンス実装です。
 
 使用方法:
-    python face-mosaic-yolo-jetson-2-yt-v2-gst.py <rtsp_url> <stream_key> [options]
+    python face-mosaic-yolo-jetson-2-yt-v2.py <rtsp_url> <stream_key> [options]
 
 例:
-    python face-mosaic-yolo-jetson-2-yt-v2-gst.py "rtsp://admin:password@192.168.1.100:554/stream" "xxxx-xxxx-xxxx-xxxx"
-    python face-mosaic-yolo-jetson-2-yt-v2-gst.py "rtsp://camera/stream" "your-stream-key" --model yolov8s.pt --confidence 0.6
+    python face-mosaic-yolo-jetson-2-yt-v2.py "rtsp://admin:password@192.168.1.100:554/stream" "xxxx-xxxx-xxxx-xxxx"
+    python face-mosaic-yolo-jetson-2-yt-v2.py "rtsp://camera/stream" "your-stream-key" --model yolov8s.pt --confidence 0.6
 
 機能:
     - 初回実行時に自動的にTensorRTエンジン（.engine）を生成
