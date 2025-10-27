@@ -351,9 +351,9 @@ def main():
         '-vsync', 'cfr',
         
         # --- 修正箇所 (Jetson向けNVENC設定 Ver.3) ---
-        '-c:v', 'h264_v4l2m2m',
-        # '-preset', 'fast',     # 削除: サポートされていない可能性
-        # '-rc', 'cbr',          # 削除: サポートされていない可能性
+        '-c:v', 'libx264',
+        '-preset', 'veryfast', # CPU負荷を最小限に
+        '-tune', 'zerolatency', # 低遅延
         # --- 修正ここまで ---
         
         '-b:v', '2500k',
