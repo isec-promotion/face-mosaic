@@ -61,7 +61,8 @@ class ThreadedVideoCapture:
     常に最新のフレームのみを保持するクラス
     """
     def __init__(self, src, max_queue_size=1):
-        self.cap = cv2.VideoCapture(src)
+        self.src = src  # <-- 修正: RTSPのURLを保存する
+        self.cap = cv2.VideoCapture(self.src) # <-- 修正: self.src を使用
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, max_queue_size)
         
         # dequeをサイズ1で作成し、常に最新のフレームのみ保持
@@ -77,8 +78,19 @@ class ThreadedVideoCapture:
                 print("[ThreadedVideoCapture] フレーム取得失敗。再接続試行...")
                 self.cap.release()
                 sleep(1)
-                self.cap = cv2.VideoCapture(self.cap.getBackendName())
+                
+                # --- 修正箇所 (再接続ロジック) ---
+                # self.cap = cv2.VideoCapture(self.cap.getBackendName()) # 削除
+                self.cap = cv2.VideoCapture(self.src) # 変更: 保存したURLで再接続
+                # --- 修正ここまで ---
+                
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                
+                # 変更: 再接続が成功したか確認する
+                if not self.cap.isOpened():
+                    print("[ThreadedVideoCapture] 再接続失敗。1秒後にリトライ...")
+                    sleep(1)
+                
                 continue
             
             # dequeにフレームを追加（古いフレームは自動的に破棄）
@@ -330,12 +342,15 @@ def main():
         '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
         # タイムスタンプ/CFR
         '-fflags', '+genpts',
-        # '-use_wallclock_as_timestamps', '1',
         '-vsync', 'cfr',
-        # エンコード（NVENC 低遅延・CBR 固定GOP）
+        
+        # --- 修正箇所 (Jetson向けNVENC設定) ---
         '-c:v', 'h264_nvenc',
-        '-tune', 'll',
-        '-rc', 'cbr',
+        # '-tune', 'll',          # 削除: Jetsonではサポートされていない
+        '-preset', 'fast',     # 変更: -tune ll の代わりに -preset fast を指定
+        '-rc', 'cbr',          # Note: これも環境によっては 'vbr' や 'constqp' の方が安定する場合があります
+        # --- 修正ここまで ---
+        
         '-b:v', '2500k',
         '-maxrate', '2500k',
         '-bufsize', '5000k',
