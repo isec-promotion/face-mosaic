@@ -19,6 +19,7 @@ import numpy as np
 import subprocess
 import sys
 import argparse
+import math
 
 try:
     from ultralytics import YOLO
@@ -156,6 +157,33 @@ def main():
         sys.exit(1)
     
     print("接続成功")
+
+    # ---------------------------------------------------------
+    # 【追加・修正箇所】ソースFPSの取得ロジック
+    # ---------------------------------------------------------
+    source_fps = cap.get(cv2.CAP_PROP_FPS)
+    print(f"検出されたソースFPS: {source_fps}")
+
+    # FPSが取得できた場合(0より大きく、120未満の妥当な値)はそれを使用
+    # 取得できない、または異常値の場合は引数のデフォルト値を使用
+    if source_fps > 0 and source_fps < 120:
+        target_fps = source_fps
+        # YouTubeなどのために整数に近い場合は丸める（例: 29.97 -> 30）
+        # 正確なFPSが必要な場合はこのif文を削除してください
+        if abs(target_fps - round(target_fps)) < 0.1:
+            target_fps = round(target_fps)
+        print(f"-> 適用FPS: {target_fps} (ソース同期)")
+    else:
+        target_fps = args.fps
+        print(f"-> 適用FPS: {target_fps} (デフォルト値)")
+    
+    # 解像度もソースに合わせたい場合は以下のように取得可能（今回は引数優先とします）
+    # source_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    # source_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    # ---------------------------------------------------------
+
+    print(f"出力: {args.output}")
+    print(f"解像度: {args.width}x{args.height}")
     
     # FFmpegプロセスの設定
     ffmpeg_cmd = [

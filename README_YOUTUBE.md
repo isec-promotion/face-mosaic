@@ -7,7 +7,9 @@ YOLOv8 を使用した顔検出とモザイク処理を行いながら、YouTube
 - **YOLOv8 による高精度な人物検出**
 - **顔部分への自動モザイク処理**
 - **YouTube Live へのリアルタイム配信**
-- **ローカルストリーミングにも対応**
+- **RTSP ストリームの別スレッド読み込み**（安定性向上）
+- **FPS 自動取得とフレーム補間**（30fps 未満の場合に自動的にフレーム複製）
+- **プレビュー画面なし**（配信専用に最適化）
 
 ## 必要な環境
 
@@ -44,26 +46,32 @@ pip install ultralytics opencv-python numpy
 ### 基本的な使い方（YouTube 配信）
 
 ```bash
-python face-mosaic-youtube.py "rtsp://camera_url" --youtube-key YOUR_STREAM_KEY
+python face-mosaic-youtube.py "rtsp://camera_url" "xxxx-xxxx-xxxx-xxxx"
 ```
+
+**注意**: `stream_key`は必須引数です（オプションではありません）。`"xxxx-xxxx-xxxx-xxxx"`の部分を実際の YouTube ストリームキーに置き換えてください。
 
 ### 解像度とフレームレートの指定
 
 ```bash
-# フルHD 30fps配信
-python face-mosaic-youtube.py "rtsp://camera_url" \
-    --youtube-key YOUR_STREAM_KEY \
+# フルHD配信（FPSは自動取得、30fps未満の場合は自動補間）
+python face-mosaic-youtube.py "rtsp://camera_url" "xxxx-xxxx-xxxx-xxxx" \
     --width 1920 \
-    --height 1080 \
-    --fps 30
+    --height 1080
 ```
+
+**FPS について**:
+
+- ソース FPS を自動取得します
+- 30fps 未満の場合は、フレーム複製により自動的に 30fps に補間されます
+- 30fps 以上の場合は、ソース FPS をそのまま使用します
+- FPS 取得に失敗した場合は、デフォルト値（30fps）を使用します
 
 ### モデルの選択
 
 ```bash
 # より高精度なモデルを使用
-python face-mosaic-youtube.py "rtsp://camera_url" \
-    --youtube-key YOUR_STREAM_KEY \
+python face-mosaic-youtube.py "rtsp://camera_url" "xxxx-xxxx-xxxx-xxxx" \
     --model yolov8s.pt
 ```
 
@@ -77,8 +85,7 @@ python face-mosaic-youtube.py "rtsp://camera_url" \
 ### 検出パラメータの調整
 
 ```bash
-python face-mosaic-youtube.py "rtsp://camera_url" \
-    --youtube-key YOUR_STREAM_KEY \
+python face-mosaic-youtube.py "rtsp://camera_url" "xxxx-xxxx-xxxx-xxxx" \
     --confidence 0.6 \
     --head-ratio 0.3
 ```
@@ -86,39 +93,34 @@ python face-mosaic-youtube.py "rtsp://camera_url" \
 - `--confidence`: 検出信頼度（0.0-1.0、高いほど誤検出が減る）
 - `--head-ratio`: 頭部領域の割合（0.1-0.5、大きいほどモザイク範囲が広い）
 
-### プレビューなしで実行
+### フレーム補間の目標 FPS を変更
 
 ```bash
-python face-mosaic-youtube.py "rtsp://camera_url" \
-    --youtube-key YOUR_STREAM_KEY \
-    --no-preview
+# 補間目標FPSを25fpsに設定（デフォルト: 30fps）
+python face-mosaic-youtube.py "rtsp://camera_url" "xxxx-xxxx-xxxx-xxxx" \
+    --interpolate-fps 25
 ```
 
-### ローカルストリーミング（YouTube 以外）
+**フレーム補間について**:
 
-```bash
-# UDP出力
-python face-mosaic-youtube.py "rtsp://camera_url" \
-    --output udp://127.0.0.1:8080
-
-# VLCで視聴
-vlc udp://@127.0.0.1:8080
-```
+- ソース FPS が`--interpolate-fps`で指定した値より低い場合、フレーム複製により自動的に補間されます
+- 例: ソースが 15fps、`--interpolate-fps 30`の場合、各フレームを 2 回送信して 30fps に補間
 
 ## コマンドラインオプション一覧
 
-| オプション      | 短縮形 | デフォルト           | 説明                           |
-| --------------- | ------ | -------------------- | ------------------------------ |
-| `rtsp_url`      | -      | (必須)               | 監視カメラの RTSP URL          |
-| `--youtube-key` | `-y`   | なし                 | YouTube Live ストリームキー    |
-| `--output`      | `-o`   | udp://127.0.0.1:8080 | 出力先 URL（YouTube 未指定時） |
-| `--width`       | `-W`   | 1280                 | 出力映像の幅                   |
-| `--height`      | `-H`   | 720                  | 出力映像の高さ                 |
-| `--fps`         | `-f`   | 25                   | フレームレート                 |
-| `--model`       | `-m`   | yolov8n.pt           | YOLOv8 モデル                  |
-| `--confidence`  | `-c`   | 0.5                  | 検出信頼度閾値                 |
-| `--head-ratio`  | `-r`   | 0.25                 | 頭部領域の割合                 |
-| `--no-preview`  | -      | False                | プレビュー非表示               |
+| オプション          | 短縮形 | デフォルト | 説明                                                            |
+| ------------------- | ------ | ---------- | --------------------------------------------------------------- |
+| `rtsp_url`          | -      | (必須)     | 監視カメラの RTSP URL                                           |
+| `stream_key`        | -      | (必須)     | YouTube Live ストリームキー                                     |
+| `--width`           | `-W`   | 1280       | 出力映像の幅                                                    |
+| `--height`          | `-H`   | 720        | 出力映像の高さ                                                  |
+| `--fps`             | `-f`   | 30         | FPS 自動取得失敗時のデフォルト FPS                              |
+| `--model`           | `-m`   | yolov8n.pt | YOLOv8 モデル                                                   |
+| `--confidence`      | `-c`   | 0.5        | 検出信頼度閾値                                                  |
+| `--head-ratio`      | `-r`   | 0.25       | 頭部領域の割合                                                  |
+| `--interpolate-fps` | -      | 30         | フレーム補間の目標 FPS（ソース FPS がこの値より低い場合に補間） |
+
+**注意**: このプログラムは YouTube 配信専用です。プレビュー画面は表示されません。
 
 ## トラブルシューティング
 
@@ -143,6 +145,17 @@ vlc udp://@127.0.0.1:8080
 - より軽量なモデル（yolov8n.pt）を使用
 - 解像度を下げる（例: 1280x720）
 - `--confidence`を上げて処理を軽減
+- GPU を使用（CUDA 対応の場合）
+
+### FPS が正しく取得できない
+
+**症状**: ソース FPS が 0 や異常な値として表示される
+
+**解決方法**:
+
+- RTSP ストリームの設定を確認
+- `--fps`オプションでデフォルト FPS を明示的に指定
+- カメラの FPS 設定を確認
 
 ### RTSP ストリームに接続できない
 
@@ -152,10 +165,12 @@ vlc udp://@127.0.0.1:8080
 
 ## YouTube 配信の推奨設定
 
-| 解像度    | ビットレート | フレームレート | モデル    |
-| --------- | ------------ | -------------- | --------- |
-| 1280x720  | 2500k        | 25-30 fps      | yolov8n/s |
-| 1920x1080 | 4000k        | 25-30 fps      | yolov8s   |
+| 解像度    | ビットレート | フレームレート | モデル    | 備考                            |
+| --------- | ------------ | -------------- | --------- | ------------------------------- |
+| 1280x720  | 2500k        | 30 fps         | yolov8n/s | ソース FPS が低い場合も自動補間 |
+| 1920x1080 | 4000k        | 30 fps         | yolov8s   | 高解像度は処理負荷が高い        |
+
+**FPS について**: ソース FPS が 30fps 未満の場合、自動的にフレーム複製により 30fps に補間されます。
 
 ## 注意事項
 

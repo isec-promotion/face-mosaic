@@ -63,21 +63,27 @@ python face-mosaic-yolov8.py "rtsp://camera/stream" --model yolov8s.pt --width 1
 
 #### 3. face-mosaic-youtube.py
 
-**YouTube Live 配信版**
+**YouTube Live 配信専用版**
 
-- face-mosaic-yolov8.py の機能を全て継承
-- YouTube Live への直接配信機能を追加
-- ストリームキーによる簡単配信
+- YouTube Live への直接配信機能
+- RTSP ストリームの別スレッド読み込み（安定性向上）
+- FPS 自動取得とフレーム補間機能（30fps 未満の場合に自動的にフレーム複製）
+- プレビュー画面なし（配信専用に最適化）
 
 ```bash
-# YouTube Live配信
-python face-mosaic-youtube.py "rtsp://camera/stream" --youtube-key YOUR_STREAM_KEY
+# YouTube Live配信（stream_keyは必須引数）
+python face-mosaic-youtube.py "rtsp://camera/stream" "xxxx-xxxx-xxxx-xxxx"
 
-# フルHD 30fps配信
-python face-mosaic-youtube.py "rtsp://camera/stream" \
-    --youtube-key YOUR_STREAM_KEY \
-    --width 1920 --height 1080 --fps 30
+# フルHD配信（FPSは自動取得・補間）
+python face-mosaic-youtube.py "rtsp://camera/stream" "xxxx-xxxx-xxxx-xxxx" \
+    --width 1920 --height 1080
 ```
+
+**主な特徴**:
+
+- `stream_key`は必須引数（オプションではありません）。`"xxxx-xxxx-xxxx-xxxx"`の部分を実際の YouTube ストリームキーに置き換えてください
+- ソース FPS を自動取得し、30fps 未満の場合は自動的にフレーム複製で補間
+- プレビュー画面は表示されません（配信専用）
 
 詳細は [README_YOUTUBE.md](README_YOUTUBE.md) を参照してください。
 
@@ -130,23 +136,6 @@ python benchmark-yolov8.py "rtsp://camera/stream" --model yolov8s.pt --frames 30
 - 検出数統計
 - デバイス情報
 
-#### example_youtube.bat
-
-YouTube 配信を簡単に開始するための Windows バッチスクリプト
-
-```batch
-@echo off
-set STREAM_KEY=your-youtube-stream-key-here
-set RTSP_URL=rtsp://admin:password@192.168.1.100:554/stream
-
-python face-mosaic-youtube.py "%RTSP_URL%" ^
-    --youtube-key %STREAM_KEY% ^
-    --width 1280 ^
-    --height 720 ^
-    --fps 25 ^
-    --model yolov8n.pt
-```
-
 ## 🔧 必要な環境
 
 ### システム要件
@@ -178,24 +167,15 @@ git clone <repository-url>
 cd face-mosaic
 ```
 
-### 2. 依存パッケージのインストール
-
-```bash
-pip install -r requirements.txt
-```
-
-または個別にインストール:
-
-```bash
-pip install ultralytics opencv-python numpy
-```
-
-### 3. FFmpeg のインストール
+### 2. FFmpeg のインストール
 
 **Windows:**
 
-1. https://ffmpeg.org/download.html からダウンロード
-2. 展開したフォルダの bin ディレクトリを PATH に追加
+管理者権限で PowerShell またはコマンドプロンプトを開き、以下のコマンドを実行する
+
+```bash
+winget install --id=Gyan.FFmpeg -e
+```
 
 **Linux (Ubuntu/Debian):**
 
@@ -210,9 +190,9 @@ sudo apt install ffmpeg
 brew install ffmpeg
 ```
 
-### 4. CUDA 対応（オプション、高速化）
+### 3. CUDA 対応（オプション、高速化）
 
-GPU 加速を使用する場合:
+GPU を使用する場合:
 
 ```bash
 # CUDA対応PyTorchのインストール
@@ -251,8 +231,10 @@ vlc udp://@127.0.0.1:8080
 4. **YouTube Live 配信**
 
 ```bash
-python face-mosaic-youtube.py "rtsp://your-camera-url" --youtube-key YOUR_STREAM_KEY
+python face-mosaic-youtube.py "rtsp://your-camera-url" "xxxx-xxxx-xxxx-xxxx"
 ```
+
+**注意**: `stream_key`は必須引数です（`"xxxx-xxxx-xxxx-xxxx"`の部分を実際の YouTube ストリームキーに置き換えてください）。FPS は自動取得され、30fps 未満の場合は自動的に補間されます。
 
 ### モデルの選択
 
@@ -349,10 +331,18 @@ python check_cuda.py
 
 **確認事項:**
 
-1. ストリームキーが正しいか
+1. ストリームキーが正しいか（必須引数として正しく指定されているか）
 2. YouTube Studio で配信状態を確認
 3. 初回配信は 24 時間の待機期間が必要な場合があります
 4. インターネット接続が安定しているか（アップロード 5Mbps 以上推奨）
+5. FFmpeg のログを確認（`[FFmpeg]`で始まるメッセージ）
+
+**使用方法の確認**:
+
+```bash
+# 正しい使用方法（stream_keyは必須引数）
+python face-mosaic-youtube.py "rtsp://camera/stream" "xxxx-xxxx-xxxx-xxxx"
+```
 
 ## ⚠️ 注意事項
 
